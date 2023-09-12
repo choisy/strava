@@ -6,6 +6,62 @@ editor_options:
 ---
 
 ```{r setup, include = FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE, message = FALSE)
 ```
 
+## Required packages
+
+```{r}
+library(FITfileR)
+library(dplyr)
+```
+
+## A few additional utilitary functions
+
+Converts speed from m/s to km/h:
+
+```{r}
+ms2kmh <- function(x) 3.6 * x
+```
+
+Retrieves speed from an activity:
+
+```{r}
+get_speed <- function(x) {
+  x |> 
+    readFitFile() |> 
+    records() |> 
+    bind_rows() |> 
+    pull(speed) |> 
+    ms2kmh()
+}
+```
+
+Computes the cruising speed as the mode of the distribution of speeds:
+
+```{r}
+cruising_speed <- function(x) {
+  dens <- density(x)
+  dens$x[which.max(dens$y)]
+}
+```
+
+## Example on one activity
+
+The blue curve is the distribution of speeds during the activity and the red and
+green vertical lines show the average and cruising speeds respectively:
+
+```{r}
+sp <- get_speed("~/Desktop/Morning_Ride.fit")
+dens <- density(sp)
+plot(dens, xlim = c(0, max(dens$x)), ylim = c(0, 1.03 * max(dens$y)),
+     xaxs = "i", yaxs = "i",
+     main = NA, xlab = "speed (km/h)", ylab = "density", col = 4, lwd = 3)
+(asp <- mean(sp))
+(csp <- cruising_speed(sp))
+abline(v = c(asp, csp), col = 2:3, lwd = 2)
+```
+
+It shows for example that the average speed is `r round(asp, 1)` km/h (red
+vertical line) whereas the cruising speed is actually `r round(csp, 1)` km/h
+(green vertical line).
