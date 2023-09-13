@@ -15,7 +15,8 @@ knitr::opts_chunk$set(echo = TRUE, cache = TRUE, message = FALSE)
 Packages that needs to be installed:
 
 ```{r}
-from_cran <- c("dplyr", "parallel", "purrr", "tidyr", "readr", "R.utils", "stringr")
+from_cran <- c("dplyr", "magrittr", "parallel", "purrr", "tidyr", "RColorBrewer",
+               "readr", "R.utils", "stringr")
 to_install <- setdiff(from_cran, installed.packages()[, "Package"])
 if (length(to_install)) install.packages(to_install)
 ```
@@ -28,6 +29,7 @@ library(FITfileR)
 library(dplyr)
 library(purrr)
 library(parallel)
+library(magrittr)
 ```
 
 
@@ -245,8 +247,10 @@ The comparison of cruising and average speeds for the groups:
 ```{r}
 avsp <- cs2av(crsp)
 
+groups <- c("A", "B+", "B", "C", "D")
+
 data.frame(
-  group          = c("A", "B+", "B", "C", "D"),
+  group          = groups,
   cruising_speed = speed_range(crsp),
   average_speed  = speed_range(round(avsp))
 )
@@ -271,4 +275,78 @@ box(bty = "o")
 par(opar)
 ```
 
+## Exploring another model
+
+```{r}
+new_limits <- c(20, 30.5, 34.5, 37.5, 40.5, 50)
+```
+
+```{r}
+speeds_lst %<>% mutate(group = rev(groups)[as.numeric(cut(cruising, new_limits))])
+```
+
+```{r}
+(tmp <- table(speeds_lst$group))
+round(100 * tmp / nrow(speeds_lst), 1)
+```
+
+```{r}
+n <- 1000
+f <- 20
+t <- 40
+
+remove_ends <- function(x) {
+  x[-c(1, length(x))]
+}
+
+groups_names <- sort(groups)
+
+ordered_groups_names <- c("D", "C", "B", "B+", "A")
+
+averagesp_limits <- speeds_lst |> 
+  group_by(group) |> 
+  group_map(~ pull(.x, average) |> density(n = n, from = f, to = t)) |> 
+  map_dfc(extract2, "y") |> 
+  setNames(groups_names) |> 
+  mutate(x = seq(f, t, l = n)) |> 
+  rowwise() |> 
+  mutate(mostlik = groups_names[which.max(c_across(A:D))]) |> 
+  group_by(mostlik) |> 
+  group_map(~ pull(.x, x) |> range()) |> 
+  setNames(groups_names) |> 
+  extract(ordered_groups_names) |> 
+  unlist() |> 
+  remove_ends() |> 
+  matrix(2) |> 
+  as.data.frame() |> 
+  map_dbl(mean)
+```
+
+```{r}
+lwd_val <- 3
+
+add_density <- function(x, ...) {
+  x |> 
+    pull(average) |> 
+    density() %>% 
+    lines(., ...)
+}
+
+plot(NA, xlim = c(25, 40), ylim = c(0, .5), xlab = "average speed (km/h)",
+     ylab = "density", xaxs = "i", yaxs = "i")
+
+rev_ordered_groups_names <- rev(ordered_groups_names)
+
+groups_colors <- RColorBrewer::brewer.pal(5, "RdYlBu")
+
+speeds_lst |> 
+  group_by(group) |> 
+  group_split() %>%
+  walk2(groups_colors[order(rev_ordered_groups_names)],
+        ~ add_density(.x, lwd = lwd_val, col = .y))
+
+abline(v = averagesp_limits, lwd = 2, col = "grey")
+
+legend("topright", legend = rev_ordered_groups_names, col = groups_colors, lwd = lwd_val, bty = "n")
+```
 
