@@ -9,14 +9,87 @@ editor_options:
 knitr::opts_chunk$set(echo = TRUE, cache = TRUE, message = FALSE)
 ```
 
+
 ## Required packages
+
+Packages that needs to be installed:
+
+```{r}
+from_cran <- c("dplyr", "parallel", "purrr", "tidyr", "readr", "R.utils", "stringr")
+to_install <- setdiff(from_cran, installed.packages()[, "Package"])
+if (length(to_install)) install.packages(to_install)
+```
+
+The `FITfileR` package also needs to be installed from
+[Github](https://github.com/grimbough/FITfileR). Loading some of these packages:
 
 ```{r}
 library(FITfileR)
 library(dplyr)
+library(purrr)
+library(parallel)
 ```
 
-## A few additional utilitary functions
+
+## Downloading Strava activities
+
+* Hover over your name in the upper right-hand corner of the Strava page. Choose
+`Settings`, then find the `My Account` tab from the menu listed on the Left.
+
+* Select `Get Started` under `Download or Delete Your Account`
+
+* Select `Request your archive` on the next page.
+
+You will receive an email with a link to download your data (this may take a few
+hours). For this reason, it’s important that you have access to the email
+account attached to your Strava profile. More info
+[here](https://support.strava.com/hc/en-us/articles/216918437-Exporting-your-Data-and-Bulk-Export#h_01GG58HC4F1BGQ9PQZZVANN6WF).
+
+I've put my Strava data here:
+
+```{r}
+data_folder <- "~/Library/CloudStorage/OneDrive-OxfordUniversityClinicalResearchUnit/data/Strava/"
+```
+
+and the downloaded data are in this subfolder:
+
+```{r}
+raw_strava <- "export_34225766/"
+```
+
+Retrieving the names of the files that correspond to cycling activities since
+2022:
+
+```{r}
+# files <- "~/Desktop/export_34225766/activities.csv" |>
+files <- paste0(data_folder, raw_strava, "activities.csv") |>
+  readr::read_csv() |> 
+  tidyr::separate_wider_delim(`Activity Date`, ",",
+                              names = c("day", "year", "time")) |> 
+  mutate(across("year", as.integer)) |> 
+  filter(`Activity Type` == "Ride", year > 2021) |> 
+  pull(Filename)
+```
+
+Keeping only the FIT files:
+
+```{r}
+files <- files[grep("fit", files)]
+```
+
+Let's copy the cycling activities to another folder in which we will decompress
+them:
+
+```{r eval = FALSE}
+riding_folder <- paste0(data_folder, "activities/")
+dir.create(riding_folder)
+dest <- paste0(riding_folder, files)
+file.copy(paste0(data_folder, raw_strava, files), dest)
+walk(dest, R.utils::gunzip)
+```
+
+
+## Some utilitary functions
 
 Converts speed from m/s to km/h:
 
@@ -24,15 +97,35 @@ Converts speed from m/s to km/h:
 ms2kmh <- function(x) 3.6 * x
 ```
 
-Retrieves speed from an activity:
+Extracts the speeds values from the data structure:
+
+```{r}
+extract_speeds <- function(x) {
+  idx <- grep("speed", names(x))
+  if (length(idx)) return(as.vector(x[[idx]]))
+  NULL
+}
+```
+
+Makes sure that the output of `records()` is a list:
+
+```{r}
+make_list <- function(x) {
+  if (is.data.frame(x)) return(list(x))
+  x
+}
+```
+
+Retrieves speeds from an activity:
 
 ```{r}
 get_speed <- function(x) {
   x |> 
     readFitFile() |> 
     records() |> 
-    bind_rows() |> 
-    pull(speed) |> 
+    make_list() |> 
+    map(extract_speeds) %>%
+    do.call(c, .) |>  
     ms2kmh()
 }
 ```
@@ -46,13 +139,14 @@ cruising_speed <- function(x) {
 }
 ```
 
+
 ## Example on one activity
 
 The blue curve is the distribution of speeds during the activity and the red and
 green vertical lines show the average and cruising speeds respectively:
 
-```{r}
-sp <- get_speed("~/Desktop/Morning_Ride.fit")
+```{r show1activity}
+sp <- get_speed(paste0(data_folder, "activities/10517736664.fit"))
 dens <- density(sp)
 plot(dens, xlim = c(0, max(dens$x)), ylim = c(0, 1.03 * max(dens$y)),
      xaxs = "i", yaxs = "i",
@@ -65,3 +159,116 @@ abline(v = c(asp, csp), col = 2:3, lwd = 2)
 It shows for example that the average speed is `r round(asp, 1)` km/h (red
 vertical line) whereas the cruising speed is actually `r round(csp, 1)` km/h
 (green vertical line).
+
+
+## Processing all the cycling acitivities
+
+Computes the average and cruising speeds from a vector of speeds:
+
+```{r}
+speeds <- function(x) {
+  c(mean, cruising_speed) |> 
+    map_dfc(function(f) f(x)) |> 
+    setNames(c("average", "cruising"))
+}
+```
+
+Reads a compressed FIT file from disk and compute the average and cruising
+speeds from it:
+
+```{r}
+read_file <- function(x) {
+  x |> 
+    get_speed() |> 
+    speeds()
+}
+```
+
+Processing all the files:
+
+```{r eval = FALSE}
+speeds_lst <- files |> 
+  stringr::str_remove(".gz") %>%
+  paste0(data_folder, .) |> 
+  mclapply(read_file, mc.cores = detectCores() - 1) |> 
+  bind_rows()
+```
+
+```{r include = FALSE}
+speeds_lst <- readRDS(paste0(data_folder, "speeds_lst.rds"))
+```
+
+Modelling the cruising speed as a function of the average speed:
+
+```{r}
+mod <- lm(cruising ~ average, speeds_lst)
+```
+
+The model's parameters estimates are the following:
+
+```{r}
+coef(mod)
+```
+
+Which means that, as a rule of thumb, you can obtain cruising speed by adding
+6 km/h to 90% of the value of the average speed. But, more precisely, the
+following function converts the cruising speed into average speed from the above
+model:
+
+```{r}
+intercept <- coef(mod)[1]
+slope <- coef(mod)[2]
+
+cs2av <- function(x) {
+  (x - intercept) / slope
+}
+```
+
+The cruising speeds that define the groups:
+
+```{r}
+crsp <- c(40, 37, 41, 34, 38, 31, 35, 25, 30)
+```
+
+A function that nicely formats speed ranges:
+
+```{r}
+speed_range <- function(x) {
+  c(paste0(x[1], "+ km/h"),
+    map_chr(as.data.frame(matrix(x[-1], 2)),
+            function(y) paste0(y[1], "-", y[2], " km/h")))
+}
+```
+
+The comparison of cruising and average speeds for the groups:
+
+```{r}
+avsp <- cs2av(crsp)
+
+data.frame(
+  group          = c("A", "B+", "B", "C", "D"),
+  cruising_speed = speed_range(crsp),
+  average_speed  = speed_range(round(avsp))
+)
+```
+
+Let's see the data points and the model:
+
+```{r}
+opar <- par(pty = "s")
+axlim <- c(18, 42)
+nb <- length(crsp)
+
+with(speeds_lst,
+     plot(average, cruising, col = 4, xlim = axlim, ylim = axlim,
+          xlab = "average speed (km/h)", ylab = "cruising speed (km/h)"))
+abline(mod, col = 2, lwd = 2)
+
+segments(rep(0, nb), crsp, avsp, crsp)
+segments(avsp, rep(0, nb), avsp, crsp)
+box(bty = "o")
+
+par(opar)
+```
+
+
