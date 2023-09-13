@@ -350,3 +350,12 @@ abline(v = averagesp_limits, lwd = 2, col = "grey")
 legend("topright", legend = rev_ordered_groups_names, col = groups_colors, lwd = lwd_val, bty = "n")
 ```
 
+```{r}
+data.frame(
+  group           = groups,
+  cruising_speed  = speed_range(crsp),
+  average_speed_1 = speed_range(round(avsp)),
+  average_speed_2 = speed_range(round(c(rep(rev(averagesp_limits), each = 2), 20)[c(1, 3, 2, 5, 4, 7, 6, 9, 8)]))
+)
+```
+
