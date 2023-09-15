@@ -9,3 +9,194 @@ editor_options:
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
+## Preamble
+
+Needed packages:
+
+```{r message = FALSE}
+library(stringr)
+library(FITfileR)
+library(dplyr)
+library(magrittr)
+```
+
+The Strava data are here:
+
+```{r}
+data_folder <- "~/Library/CloudStorage/OneDrive-OxfordUniversityClinicalResearchUnit/data/Strava/"
+```
+
+```{r eval = FALSE, include = FALSE}
+exportations <- data.frame(date = lubridate::ymd(20230912),
+                           name = "export_34225766/")
+
+saveRDS(exportations, paste0(data_folder, "exportations.rds"))
+```
+
+and the downloaded raw data are in this subfolder:
+
+```{r}
+raw_strava <- data_folder |>
+  paste0("exportations.rds") |>
+  readRDS() |> 
+  arrange(date) |> 
+  pull(name) |> 
+  last()
+```
+
+## Activities summary
+
+Let's load the summary table of the of activities:
+
+```{r}
+activities <- readr::read_csv(paste0(data_folder, raw_strava, "activities.csv"))
+```
+
+Fixing some problems regarding some names:
+
+```{r}
+tmp <- names(activities)
+idx <- grep("horton", tmp)
+foo <- tmp[idx]
+bar <- foo |> 
+  str_remove("^.*\">") |> 
+  str_remove("<.*$")
+
+if (length(intersect(bar, tmp)) < 1) {
+  tmp[idx] <- bar
+  names(activities) <- tmp
+}
+```
+
+Some columns are more or less duplicated. Let's remove them by choosing the one
+with most information:
+
+```{r}
+to_discard <- function(x) {
+  subact <- select(activities, contains(x))
+  the_names <- names(subact)
+  
+  check <- subact |> 
+    setNames(c("a", "b")) |> 
+    mutate(diff = a - b) |> 
+    filter(diff != 0 | is.na(diff))
+  
+  tmp <- apply(check, 2, function(x) sum(is.na(x)))
+  rslt <- which(tmp < 1)
+  lgth <- length(rslt)
+  
+  if (lgth) {
+    if (lgth < 2) {
+      return(the_names[-rslt])
+    }
+  } else {
+    return(the_names[which.max(tmp[-3])])
+  }
+}
+
+to_remove <- grep("\\d", names(activities), value = TRUE) |> 
+  str_remove("\\d+") |> 
+  unique() |> 
+  purrr::map_chr(to_discard)
+
+activities[to_remove] <- NULL
+names(activities) <- str_remove(names(activities), "...\\d+$")
+```
+
+Final tuning and cleaning:
+
+```{r}
+activities <- activities |> 
+  mutate_at("Activity Date", lubridate::mdy_hms) |> 
+  arrange(`Activity Date`) |> 
+  select(-`Prefer Perceived Exertion`, -`From Upload`) |> 
+  select(where(~ !all(is.na(.x))))
+```
+
+Note here that the date and time is in UTC. Note also that not all of them are
+in FIT format:
+
+```{r}
+activities |> 
+  pull(Filename) |> 
+  str_remove(".gz") |> 
+  str_remove("^.*\\d.") |> 
+  table()
+```
+
+## FIT files
+
+Let's start by reading the FIT files first. Here is the names of the FIT files:
+
+```{r}
+files <- activities |> 
+  pull(Filename) %>% 
+  grep("fit", ., value = TRUE)
+```
+
+Next, we copy all the FIT files to another directory where we unzip them:
+
+```{r eval = FALSE}
+destination <- paste0(data_folder, str_replace(raw_strava, "export", "fit"))
+dir.create(destination)
+dest <- paste0(destination, str_remove(files, "activities/"))
+file.copy(paste0(data_folder, raw_strava, files), dest)
+walk(dest, R.utils::gunzip)
+```
+
+```{r include = FALSE}
+destination <- paste0(data_folder, str_replace(raw_strava, "export", "fit"))
+```
+
+Let's now read each of the unzipped FIT file and convert them into an RDS file
+that we save into another folder:
+
+```{r eval = FALSE}
+rds_files <- str_replace(destination, "fit", "rds")
+dir.create(rds_files)
+
+files <- files |> 
+  str_remove("activities/") |> 
+  str_remove(".fit.gz")
+  
+fit2rds <- function(x) {
+  tmp <- purrr::safely(readFitFile)(paste0(destination, x, ".fit"))
+  if (is.null(tmp$error)) {
+    saveRDS(tmp$result, paste0(rds_files, x, ".rds"))
+  }
+  rm(tmp)
+}
+
+walk(files, fit2rds)
+```
+
+```{r include = FALSE}
+rds_files <- str_replace(destination, "fit", "rds")
+```
+
+Errors occurred for a number of files:
+
+```{r}
+error_files <- setdiff(str_remove(dir(destination), ".fit"),
+                       str_remove(dir(rds_files), ".rds"))
+length(error_files)
+head(error_files)
+```
+
+Just confirming that it doesn't work:
+
+```{r eval = FALSE}
+readFitFile(paste0(destination, "2356152777", ".fit"))
+```
+
+Not even after having unzipped the file by hand:
+
+```{r eval = FALSE}
+readFitFile("~/Desktop/2356152777.fit")
+```
+
+One possibility is that there has been errors either when the archive was
+created by Strava, or during the downloading process. For the latter we can just
+try downloading the archive again. For the former we can make another request in
+one week and download the new archive.
+
