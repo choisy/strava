@@ -63,7 +63,6 @@ Retrieving the names of the files that correspond to cycling activities since
 2022:
 
 ```{r}
-# files <- "~/Desktop/export_34225766/activities.csv" |>
 files <- paste0(data_folder, raw_strava, "activities.csv") |>
   readr::read_csv() |> 
   tidyr::separate_wider_delim(`Activity Date`, ",",
