@@ -200,3 +200,44 @@ created by Strava, or during the downloading process. For the latter we can just
 try downloading the archive again. For the former we can make another request in
 one week and download the new archive.
 
+## GPX and TCX files
+
+```{r}
+gpx_dates <- activities |>
+  filter(grepl("gpx", Filename)) |>
+  pull(`Activity Date`)
+
+nearby_activities <- function(x) {
+  filter(activities, `Activity Date` > as_date(x) - 2, `Activity Date` < as_date(x) + 2)
+}
+
+(a <- map(gpx_dates, nearby_activities))
+```
+
+There are only activities `1946738728` and `2211797944` that we can suspect to
+be identical, as well as `2211797355` and `1950384218`, even though the names of
+the files are different:
+
+```{r}
+pull(a[[1]], Filename)
+```
+
+Let's see with TCX:
+
+```{r}
+tcx_dates <- activities |>
+  filter(grepl("tcx", Filename)) |>
+  pull(`Activity Date`)
+
+map(tcx_dates, nearby_activities)
+```
+
+Something weird between 2020-07-17 and 2020-07-28
+
+```{r eval = FALSE}
+library(activatr)
+
+gpxfile <- parse_gpx("~/Desktop/1946738728.gpx")
+mutate_with_speed(gpxfile)
+```
+
