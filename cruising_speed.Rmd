@@ -22,7 +22,18 @@ if (length(to_install)) install.packages(to_install)
 ```
 
 The `FITfileR` package also needs to be installed from
-[Github](https://github.com/grimbough/FITfileR). Loading some of these packages:
+[Github](https://github.com/grimbough/FITfileR).
+
+```{r}
+if (! "FITfileR" %in% installed.packages()[, "Package"]) {
+  if (! "remotes" %in% installed.packages()[, "Package"]) {
+    install.packages("remotes")
+  }
+  remotes::install_github("grimbough/FITfileR")
+}
+```
+
+Loading some of these packages:
 
 ```{r}
 library(FITfileR)
